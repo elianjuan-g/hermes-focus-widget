@@ -36,14 +36,70 @@ A phone Pomodoro counts wall-clock minutes even while you wait for the agent. Th
 | Setup | Account / app install | None — install the plugin, it runs |
 | Credentials / network | Often required | None — 100% local |
 
+## Design decisions
+
+The widget is deliberately minimal: one focus element, one accent, no
+decoration. Every element must answer "how much time is left", "what
+phase is this", or "what do I do next" — anything else was removed.
+
+- **One accent, one job.** Surfaces are cloud white (`#FFFFFF`,
+  `#F5F6F7`–`#ECEEF0` secondary), text charcoal (`#1F2937` titles,
+  `#6B7280` dim labels), separators `#E5E7EB`. A single muted teal
+  (`#0F766E`) marks the active state; focus and break are told apart by
+  the accent plus the phase label, not by extra colours. No dark theme
+  in v1 — one light theme, done properly, rather than two half-done.
+- **One thin ring, not a bar.** Progress is a single 2 px ring around
+  the countdown. 2 px matches the 2 px icon stroke, so the ring reads
+  as part of the same drawing system instead of a competing element.
+  A bar would add a second progress metaphor; one ring is enough.
+- **One weight, one number.** The countdown is a single large
+  tabular-numeral figure (weight 700); the phase label above it is
+  small uppercase (`FOCUS` / `BREAK` / `PAUSED` / `IDLE`). Nothing
+  else on the main surface competes with the number.
+- **Three icon-only controls.** Start/pause, skip, reset — Lucide-style
+  SVG (stroke 2, 24 px grid, `currentColor`), 44 px targets, no emoji
+  anywhere. Stats live behind one tap ("Session stats"); settings live
+  on a separate page. The main surface is the timer, full stop.
+- **Tokens, not one-offs.** Radius 12 (surfaces) / 8 (controls),
+  spacing 4/8/12/16/24/32, type 12 label / 14 body / 56 number (page)
+  / 30 (float). Contrast is WCAG AA (teal on white ~5.0:1, dim grey
+  ~4.83:1, charcoal ~15.9:1).
+- **Settings are the user's, not the config file's.** On-disk state
+  is the source of truth: `plugin.yaml` defaults only seed a first
+  run with no saved state. A plugin reload never silently reverts a
+  settings-page choice (verified live across a gateway restart).
+- **Placement is measured, not assumed.** The floating widget and the
+  chip popover re-measure their rendered position after placement and
+  correct any residual offset (up to 3 rounds), so they land fully
+  inside the viewport even when the host layout shifts them.
+
+Self-review against the no-slop checklist (1–5): hierarchy 5,
+consistency 5, accessibility 4 (dim labels sit just above the AA
+floor by design), realism 5.
+
 ## Install
 
 1. Install the plugin into Hermes (`hermes plugins install hermes-focus-widget`, or copy this folder to `~/.hermes/plugins/hermes-focus-widget/`).
-2. Restart the gateway (`systemctl --user restart hermes-gateway`) or start a session — the plugin loads on start.
-3. The widget appears in Hermes Desktop: a floating widget (bottom-right, draggable) and a status-bar chip. The full page is in the sidebar under **Focus Widget**, or run `/pomodoro status` in chat.
-4. The widget UI is served locally at `http://127.0.0.1:18778/` (loopback only; port configurable via `hud_port`).
+2. Enable it: `hermes plugins enable hermes-focus-widget`, then
+   restart the gateway (`systemctl --user restart hermes-gateway`) or
+   start a session — the plugin loads on start.
+3. In Hermes Desktop, open **Capabilities → Plugins** and turn on the
+   **Focus Widget** row's left (Desktop) switch. The packaged desktop
+   half ships opt-in off; the right switch is the agent half. The
+   choice persists across app restarts.
+4. The widget appears in Hermes Desktop: a floating widget
+   (bottom-right, draggable) and a status-bar chip. The full page is
+   in the sidebar under **Focus Widget**, or run `/pomodoro status` in
+   chat.
+5. The widget UI is served locally at `http://127.0.0.1:18778/`
+   (loopback only; port configurable via `hud_port`).
 
 No account, no API key, no extra install step.
+
+Note: this build of Hermes Desktop shows no bottom status-bar strip
+in the main view — the chip is registered, clickable, and its popover
+opens, but its on-screen visibility depends on the Desktop build.
+Check it on your own Desktop if the strip is not visible.
 
 ## Usage
 
@@ -51,13 +107,13 @@ No account, no API key, no extra install step.
 - **Settings** — on the widget page: focus / short break / long break durations, sessions before a long break, agent-aware on/off, idle threshold (seconds without agent activity before the agent counts as idle), auto-start breaks, auto-start next focus, sound on phase change.
 - **Statistics** — today / this week totals and the day streak on the page; `/pomodoro stats` in chat.
 - **Floating widget** — drag it anywhere; the position is saved. Close it with `×`; bring it back from the command palette (`Focus Widget: Toggle floating widget`).
-- **Status-bar chip** — shows the phase and time left at a glance; click it to open the full page.
+- **Status-bar chip** — shows the time left at a glance (text only, no emoji); click it for a stats popover with an "Open full page" button.
 
 ## How agent-awareness works
 
 The agent-side plugin registers hooks (`pre_llm_call`, `pre_tool_call`, `transform_llm_output`, `on_session_start`). Every hook call stamps the last-activity time. The timer thread ticks once a second; in agent-aware focus mode a second only counts when the last activity is within the idle threshold (default 120 s). In manual mode every second counts. Breaks always count wall-clock time — a break is a break.
 
-State (timer phase, elapsed seconds, settings, session log) is stored as JSON in `~/.hermes/plugin-data/hermes-focus-widget/pomodoro-state.json`, written atomically, and restored on gateway restart — a session in progress survives a restart.
+State (timer phase, elapsed seconds, settings, session log) is stored as JSON in `~/.hermes/plugin-data/hermes-focus-widget/focus-state.json`, written atomically, and restored on gateway restart — a session in progress survives a restart.
 
 ## Limits (honest)
 

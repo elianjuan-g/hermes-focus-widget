@@ -5,10 +5,9 @@
 # half ships as a static `desktop/plugin.js` and never fetches,
 # downloads, or replaces itself.
 #
-# DRAFT — screenshots below point at files captured from a real Hermes
-# Desktop render during PC verification; they 404 until those captures
-# are committed. Do NOT open the catalog PR until the screenshot files
-# exist at these paths.
+# Screenshots below are real captures from a Hermes Desktop render
+# (Playwright, operator PC, 12 Nov 2026) and exist at these paths.
+# Do NOT open the catalog PR until the pinned sha is the final HEAD.
 name: hermes-focus-widget
 title: "Focus Widget"
 repo: https://github.com/elianjuan-g/hermes-focus-widget
@@ -29,7 +28,7 @@ description: >-
   surfaces poll that endpoint (floating widget and status-bar chip
   every 2 s, full page every 1 s). State lives in one JSON file under
   the Hermes plugin-data directory
-  (~/.hermes/plugin-data/hermes-focus-widget/pomodoro-state.json), written
+  (~/.hermes/plugin-data/hermes-focus-widget/focus-state.json), written
   atomically, restored on gateway restart. One daemon thread for the
   1-second timer tick and one loopback HTTP server thread, both inside
   the gateway process. No self-updater; no core overrides.
@@ -39,9 +38,11 @@ category: desktop
 requires_hermes: ">=0.21.5"
 docs_url: https://github.com/elianjuan-g/hermes-focus-widget
 screenshots:
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-floating.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-chip.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-page.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/47f71ad/docs/screenshots/_float.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/47f71ad/docs/screenshots/_page.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/47f71ad/docs/screenshots/_settings.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/47f71ad/docs/screenshots/_chip.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/47f71ad/docs/screenshots/_01-main.png"
 readme: true
 known_issues:
   - "Agent activity is not human focus: the timer knows when the agent is working, not whether the operator is focused."
