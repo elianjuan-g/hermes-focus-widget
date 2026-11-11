@@ -1,0 +1,90 @@
+name: hermes-focus-widget
+version: 1.0.0
+description: "A Pomodoro widget for Hermes Desktop that only counts focus time while the agent is actually working. Agent-aware timer (25/5/15 by default, configurable), session log with today/week totals and a day streak, settings page, and a loopback widget UI. 100% local: no network calls, no credentials, no telemetry."
+author: "Elian Juan Gonzales"
+license: "MIT"
+homepage: "https://github.com/elianjuan-g/hermes-focus-widget"
+repository: "https://github.com/elianjuan-g/hermes-focus-widget"
+entrypoint: "hermes_focus_widget:register"
+min_hermes_version: "0.21.0"
+categories:
+  - productivity
+  - desktop
+  - monitoring
+tags:
+  - pomodoro
+  - focus-timer
+  - widget
+  - agent-aware
+  - session-stats
+  - desktop-ui
+
+provides:
+  hooks:
+    - on_session_start
+    - pre_llm_call
+    - pre_tool_call
+    - transform_llm_output
+  tools:
+    - focus_timer
+  commands:
+    - /focus
+    # /focus takes subcommands: start | pause | resume | stop | status
+    # | stats | reset (parsed from the command text by the handler).
+
+# Top-level provides_* lists: `hermes plugins validate` and the loader
+# read ONLY these keys — the nested `provides:` block above is not seen
+# by the validator, so keep both in sync.
+provides_tools:
+  - focus_timer
+provides_hooks:
+  - on_session_start
+  - pre_llm_call
+  - pre_tool_call
+  - transform_llm_output
+
+config_schema:
+  focus_minutes:
+    type: integer
+    default: 25
+    description: "Length of one focus session, in minutes."
+  short_break_minutes:
+    type: integer
+    default: 5
+    description: "Length of a short break, in minutes."
+  long_break_minutes:
+    type: integer
+    default: 15
+    description: "Length of a long break (after N focus sessions), in minutes."
+  sessions_before_long_break:
+    type: integer
+    default: 4
+    description: "Focus sessions completed before a long break is taken."
+  agent_aware:
+    type: boolean
+    default: true
+    description: "When on, the focus timer only counts while the agent is active; it waits automatically when the agent is idle. Off means a classic wall-clock Pomodoro."
+  idle_threshold_seconds:
+    type: integer
+    default: 120
+    description: "Seconds without agent activity after which the agent counts as idle (agent-aware mode)."
+  auto_start_breaks:
+    type: boolean
+    default: false
+    description: "Start the break automatically when a focus session completes."
+  auto_start_focus:
+    type: boolean
+    default: false
+    description: "Start the next focus session automatically when a break completes."
+  sound_enabled:
+    type: boolean
+    default: true
+    description: "Play a short beep in the widget when the phase changes."
+  hud_port:
+    type: integer
+    default: 18778
+    description: "Local port for the widget UI (loopback only)."
+  auto_launch_server:
+    type: boolean
+    default: true
+    description: "Start the local widget server on 127.0.0.1 when the plugin loads."

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-focus-widget"
+version = "1.0.0"
+description = "A Pomodoro widget for Hermes Desktop that only counts focus time while the agent is actually working."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Elian Juan Gonzales"}
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/elianjuan-g/hermes-focus-widget"
+Repository = "https://github.com/elianjuan-g/hermes-focus-widget"
+
+[tool.setuptools]
+packages = ["hermes_focus_widget"]
+
+[tool.setuptools.data-files]
+"share/hermes-focus-widget" = ["plugin.yaml", "README.md", "CHANGELOG.md", "LICENSE"]
+"share/hermes-focus-widget/desktop" = ["desktop/plugin.js"]

@@ -1,0 +1,5 @@
+include plugin.yaml README.md CHANGELOG.md LICENSE
+include desktop/plugin.js
+recursive-include tests *.py
+global-exclude *.pyc
+global-exclude __pycache__
