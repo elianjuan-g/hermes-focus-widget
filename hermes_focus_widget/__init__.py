@@ -92,15 +92,24 @@ def _read_plugin_config(ctx: Any) -> Dict[str, Any]:
 
 
 def get_timer(config: Optional[Dict[str, Any]] = None) -> FocusTimer:
-    """Process-wide singleton timer (restored from disk on first use)."""
+    """Process-wide singleton timer (restored from disk on first use).
+
+    Precedence is deliberate: disk state is the source of truth for
+    settings the user changed in the widget settings page (persisted
+    by /api/settings). Config (plugin.yaml defaults / config.yaml)
+    only seeds a FIRST run with no disk state. The previous code
+    applied config over disk state on every reload, so each gateway
+    or plugin reload silently reverted the user's choices to the
+    schema defaults — e.g. agent_aware back to True, freezing a
+    manual-mode timer in "waiting for agent" (seen live 12 Nov 2026).
+    """
     global _TIMER
     if _TIMER is None:
         saved = load_state()
-        timer = FocusTimer.from_dict(saved) if saved else FocusTimer(config)
-        if config:
-            timer.update_settings(
-                {k: v for k, v in config.items() if k in timer.settings}
-            )
+        if saved:
+            timer = FocusTimer.from_dict(saved)
+        else:
+            timer = FocusTimer(config)
         _TIMER = timer
     return _TIMER
 
@@ -190,7 +199,9 @@ class _FocusWidgetHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = urlparse(self.path).path
-        if path in ("/", "/index.html"):
+        if path in ("/", "/index.html", "/settings"):
+            # Same page; the client shows the settings view when the
+            # path is /settings (separate view, same server).
             self._send_html(build_widget_html())
             return
         if path == "/api/state":

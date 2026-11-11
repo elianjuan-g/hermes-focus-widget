@@ -4,11 +4,10 @@
  * Three surfaces, all reading the same loopback state server
  * (http://127.0.0.1:<port>/api/state, served by the agent-side plugin):
  *
- * 1. A status-bar chip (bottom-right bar, `STATUSBAR_AREAS.right`):
- *    phase emoji + time left, e.g. "🍅 12:34" while focusing,
- *    "☕ 04:59" on a break. Clicking it opens the full page.
- *    The chip is the glanceable surface; it polls the same endpoint
- *    as the other surfaces (one shared 2s poll).
+ * 1. A status-bar chip: a small dot + time left (no emoji), e.g.
+ *    "24:48". Clicking it opens a small popover with today/week/streak
+ *    and a link to the full page. The chip is the glanceable surface;
+ *    it polls the same endpoint as the other surfaces (one shared 2s poll).
  *
  * 2. A small floating widget pinned to the Desktop window
  *    (bottom-right, draggable, position saved in plugin-scoped
@@ -18,13 +17,21 @@
  *    server cannot be reached (for example a remote backend), the
  *    floating widget says so and offers to open the full page instead.
  *
- * 3. A "Focus Widget" page (sidebar nav + command palette),
- *    embedding the full widget UI in the SDK's SandboxedFrame — the
- *    same pattern as the Manas Aegis HUD page. The page is
- *    same-origin with the widget server, so its polling just works.
+ * 3. A "Focus Widget" page (sidebar nav + command palette) and a
+ *    separate settings page, embedding the widget UI in the SDK's
+ *    SandboxedFrame — the same pattern as the Manas Aegis HUD page.
+ *    The page is same-origin with the widget server, so its polling
+ *    just works.
  *
  * Phase changes are announced with host.notify (in-app toast) and,
  * when the user is away, ctx.os.notify (native OS notification).
+ *
+ * Design (locked, MyLord 12 Nov 2026): minimal, modern, cloud-light
+ * only. One focus element — the countdown. One thin 2px progress ring
+ * (no bar). One calm accent, muted teal #0F766E; state is told by
+ * accent + phase label, never by extra colour. Stats live behind one
+ * tap. Controls are icon-only Lucide-style SVGs (stroke 2, 24px grid,
+ * currentColor), 44px targets. No emoji anywhere.
  *
  * Stays inside the plugin SDK surface: static imports only from
  * '@hermes/plugin-sdk' and 'react/jsx-runtime', no eval, no prototype
@@ -55,9 +62,18 @@ const DEFAULT_PORT = 18778
 const POLL_MS = 2000
 const FLOAT_STORAGE_KEY = 'float.position'
 const FLOAT_VISIBLE_KEY = 'float.visible'
+// Cloud-light tokens (single scale; v1 has no dark theme).
+const ACCENT = '#0F766E'
+const ACCENT_DARK = '#0B5E57'
+const INK = '#1F2937'
+const MUTED = '#6B7280'
+const BORDER = '#E5E7EB'
+const SURFACE = '#FFFFFF'
+const RING_C_FLOAT = 326.73 // 2 * PI * 52
 
 const widgetUrlAtom = atom(null)
-const chipAtom = atom({ label: '🍅 --:--', title: 'Focus Widget — idle' })
+const chipDataAtom = atom(null) // { timer, stats } from the shared poll
+const chipOpenAtom = atom(false)
 let portPromise = null
 let floatRoot = null
 let floatCtx = null
@@ -65,6 +81,15 @@ let pollTimer = null
 let pollCtx = null
 let lastPhase = null
 let lastNotifiedPhase = null
+let chipOutsideListener = null
+
+// Lucide-style icons (stroke 2, 24px grid, currentColor). No emoji.
+const ICON_PLAY = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>'
+const ICON_PAUSE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg>'
+const ICON_SKIP = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" x2="19" y1="5" y2="19"/></svg>'
+const ICON_RESET = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>'
+const ICON_CHEVRON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>'
+const ICON_X = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>'
 
 function widgetUrlFor(port) {
   return `http://127.0.0.1:${port}/`
@@ -111,18 +136,6 @@ function phaseLabel(p) {
   return { idle: 'Idle', focus: 'Focus', short_break: 'Short break', long_break: 'Long break' }[p] || p
 }
 
-function chipFor(st) {
-  if (!st || !st.phase) return { label: '🍅 --:--', title: 'Focus Widget — server not running' }
-  if (st.phase === 'focus') {
-    const extra = st.waiting_for_agent ? ' · waiting for agent' : st.running ? '' : ' · paused'
-    return { label: '🍅 ' + fmt(st.remaining_s), title: 'Focus ' + st.focus_completed + '/' + st.sessions_before_long_break + extra + ' — click to open' }
-  }
-  if (st.phase === 'short_break' || st.phase === 'long_break') {
-    return { label: '☕ ' + fmt(st.remaining_s), title: phaseLabel(st.phase) + ' — click to open' }
-  }
-  return { label: '🍅 --:--', title: 'Focus Widget — idle, click to start' }
-}
-
 function notifyPhaseChange(phase) {
   if (phase === lastNotifiedPhase) return
   lastNotifiedPhase = phase
@@ -150,43 +163,82 @@ async function postControl(port, action) {
 // whether or not the floating widget is visible.
 async function pollOnce() {
   const port = await ensureWidgetPort()
-  let st = null
+  let payload = null
   try {
     const res = await fetch(stateUrlFor(port))
-    const data = await res.json()
-    st = (data && data.timer) || null
+    payload = await res.json()
   } catch (e) {
-    st = null
+    payload = null
   }
-  chipAtom.set(chipFor(st))
+  const st = (payload && payload.timer) || null
+  chipDataAtom.set(payload && st ? { timer: st, stats: payload.stats || {} } : null)
+  if (floatRoot) floatRoot._payload = payload
   if (st && st.phase && st.phase !== lastPhase) {
     if (lastPhase !== null) notifyPhaseChange(st.phase)
     lastPhase = st.phase
   }
-  if (floatRoot) {
-    const timeEl = floatRoot.querySelector('#hfw-time')
-    const statusEl = floatRoot.querySelector('#hfw-status')
-    const startBtn = floatRoot.querySelector('#hfw-start')
-    if (timeEl && statusEl && startBtn) {
-      if (!st) {
-        timeEl.textContent = '--:--'
-        statusEl.textContent = 'Widget server not running'
-      } else {
-        timeEl.textContent = fmt(st.remaining_s)
-        if (st.phase === 'focus' && st.running) {
-          statusEl.textContent = st.agent_aware
-            ? (st.waiting_for_agent ? 'Waiting for agent…' : 'Agent active · counting')
-            : 'Counting'
-          startBtn.textContent = 'Pause'
-          startBtn.onclick = () => postControl(port, 'pause')
-        } else {
-          statusEl.textContent = phaseLabel(st.phase)
-          startBtn.textContent = 'Start'
-          startBtn.onclick = () => postControl(port, 'start')
-        }
-      }
-    }
+  updateFloat(st, port)
+}
+
+function updateFloat(st, port) {
+  if (!floatRoot) return
+  const timeEl = floatRoot.querySelector('#hfw-time')
+  const phaseEl = floatRoot.querySelector('#hfw-phase')
+  const ringEl = floatRoot.querySelector('#hfw-ring')
+  const startBtn = floatRoot.querySelector('#hfw-start')
+  const skipBtn = floatRoot.querySelector('#hfw-skip')
+  const resetBtn = floatRoot.querySelector('#hfw-reset')
+  if (!timeEl || !phaseEl || !ringEl || !startBtn) return
+  if (!st) {
+    timeEl.textContent = '--:--'
+    phaseEl.textContent = 'Idle'
+    phaseEl.style.color = MUTED
+    ringEl.style.stroke = BORDER
+    ringEl.setAttribute('stroke-dashoffset', String(RING_C_FLOAT))
+    startBtn.innerHTML = ICON_PLAY
+    startBtn.setAttribute('aria-label', 'Start focus')
+    return
   }
+  const running = !!st.running
+  const isBreak = st.phase === 'short_break' || st.phase === 'long_break'
+  const label = st.phase === 'focus' ? (running ? 'Focus' : 'Paused') : isBreak ? 'Break' : 'Idle'
+  const accent = running && (st.phase === 'focus' || isBreak)
+  timeEl.textContent = fmt(st.remaining_s)
+  phaseEl.textContent = label
+  phaseEl.style.color = accent ? ACCENT : MUTED
+  const frac = st.duration_s ? Math.min(1, Math.max(0, st.elapsed_s / st.duration_s)) : 0
+  ringEl.setAttribute('stroke-dashoffset', (RING_C_FLOAT * (1 - frac)).toFixed(1))
+  ringEl.style.stroke = accent ? ACCENT : (st.phase === 'idle' ? BORDER : '#9CA3AF')
+  startBtn.innerHTML = running ? ICON_PAUSE : ICON_PLAY
+  startBtn.setAttribute('aria-label', running ? 'Pause timer' : (st.phase === 'focus' ? 'Resume timer' : 'Start focus'))
+  startBtn.onclick = () => postControl(port, running ? 'pause' : 'start')
+  if (skipBtn) {
+    skipBtn.disabled = st.phase === 'idle'
+    skipBtn.onclick = () => postControl(port, 'skip')
+  }
+  if (resetBtn) {
+    resetBtn.disabled = st.phase === 'idle' && !running
+    resetBtn.onclick = () => postControl(port, 'reset')
+  }
+  const det = floatRoot.querySelector('#hfw-details-body')
+  if (det && !det.hidden) updateFloatDetails()
+}
+
+// Stats for the float's details view come from the latest poll payload,
+// kept on the root by pollOnce (no second fetch).
+function updateFloatDetails() {
+  if (!floatRoot) return
+  const today = floatRoot.querySelector('#hfw-stats-today')
+  const week = floatRoot.querySelector('#hfw-stats-week')
+  const streak = floatRoot.querySelector('#hfw-stats-streak')
+  const empty = floatRoot.querySelector('#hfw-empty')
+  if (!today || !week || !streak) return
+  const p = floatRoot._payload
+  const s = (p && p.stats) || {}
+  today.textContent = (s.today_sessions || 0) + ' sessions · ' + (s.today_minutes || 0) + ' min'
+  week.textContent = (s.week_sessions || 0) + ' sessions · ' + (s.week_minutes || 0) + ' min'
+  streak.textContent = (s.streak_days || 0) + ' days'
+  if (empty) empty.hidden = (s.total_sessions || 0) > 0
 }
 
 function startPolling(ctx) {
@@ -226,110 +278,222 @@ function storageSet(ctx, key, value) {
   } catch (e) { /* best effort */ }
 }
 
+function ensureFloatStyle() {
+  if (typeof document === 'undefined' || document.getElementById('hfw-style')) return
+  const style = document.createElement('style')
+  style.id = 'hfw-style'
+  style.textContent =
+    '#hermes-focus-widget-float{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;}' +
+    '#hermes-focus-widget-float .hfw-head{display:flex;justify-content:space-between;align-items:center;padding:12px 12px 0;cursor:grab;}' +
+    '#hermes-focus-widget-float .hfw-phase{font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:' + MUTED + ';}' +
+    '#hermes-focus-widget-float .hfw-close{border:0;background:none;color:' + MUTED + ';cursor:pointer;padding:4px;display:inline-flex;border-radius:8px;}' +
+    '#hermes-focus-widget-float .hfw-close:hover{color:' + INK + ';background:#F5F6F7;}' +
+    '#hermes-focus-widget-float .hfw-ringwrap{position:relative;width:120px;height:120px;margin:12px auto 0;}' +
+    '#hermes-focus-widget-float .hfw-ring{transform:rotate(-90deg);display:block;}' +
+    '#hermes-focus-widget-float .hfw-ring circle{fill:none;stroke-width:2;}' +
+    '#hermes-focus-widget-float .hfw-time{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;color:' + INK + ';}' +
+    '#hermes-focus-widget-float .hfw-btns{display:flex;gap:8px;justify-content:center;margin-top:12px;}' +
+    '#hermes-focus-widget-float .hfw-btn{width:44px;height:44px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent;cursor:pointer;padding:0;}' +
+    '#hermes-focus-widget-float .hfw-btn svg{width:20px;height:20px;}' +
+    '#hermes-focus-widget-float .hfw-btn.primary{background:' + ACCENT + ';color:#FFFFFF;}' +
+    '#hermes-focus-widget-float .hfw-btn.primary:hover{background:' + ACCENT_DARK + ';}' +
+    '#hermes-focus-widget-float .hfw-btn.ghost{background:' + SURFACE + ';border-color:' + BORDER + ';color:' + INK + ';}' +
+    '#hermes-focus-widget-float .hfw-btn.ghost:hover{background:#F5F6F7;}' +
+    '#hermes-focus-widget-float .hfw-btn:focus-visible{outline:2px solid ' + ACCENT + ';outline-offset:2px;}' +
+    '#hermes-focus-widget-float .hfw-btn:disabled{opacity:.45;cursor:default;}' +
+    '#hermes-focus-widget-float .hfw-details{width:100%;min-height:44px;display:flex;justify-content:space-between;align-items:center;background:none;border:0;border-top:1px solid ' + BORDER + ';margin-top:12px;padding:12px 12px 0;font-size:14px;font-weight:600;color:' + INK + ';cursor:pointer;text-align:left;}' +
+    '#hermes-focus-widget-float .hfw-details .hfw-chev{transition:transform .2s ease;color:' + MUTED + ';}' +
+    '#hermes-focus-widget-float .hfw-details[aria-expanded="true"] .hfw-chev{transform:rotate(180deg);}' +
+    '#hermes-focus-widget-float .hfw-srow{display:flex;justify-content:space-between;gap:12px;padding:8px 12px;border-bottom:1px solid ' + BORDER + ';font-size:13px;}' +
+    '#hermes-focus-widget-float .hfw-srow span:first-child{color:' + MUTED + ';}' +
+    '#hermes-focus-widget-float .hfw-srow span:last-child{font-weight:600;font-variant-numeric:tabular-nums;}' +
+    '#hermes-focus-widget-float .hfw-open{display:block;text-align:center;font-size:13px;font-weight:600;color:' + ACCENT + ';text-decoration:none;padding:12px;cursor:pointer;}' +
+    '#hermes-focus-widget-float .hfw-empty{color:' + MUTED + ';font-size:13px;padding:8px 12px;}'
+  document.head.appendChild(style)
+}
+
 // --- floating widget -------------------------------------------------
 function mountFloatingWidget(ctx) {
   if (floatRoot || typeof document === 'undefined') return
   floatCtx = ctx
+  ensureFloatStyle()
   const root = document.createElement('div')
   root.id = 'hermes-focus-widget-float'
-  root.style.cssText = 'position:fixed;z-index:9999;right:16px;bottom:16px;width:212px;background:#171a21;color:#e6e6e6;border:1px solid #262b36;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.45);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;user-select:none;'
+  root.style.cssText = 'position:fixed;z-index:9999;left:0;top:0;width:212px;background:' + SURFACE + ';color:' + INK + ';border:1px solid ' + BORDER + ';border-radius:12px;box-shadow:0 4px 16px rgba(31,41,55,.08);'
   root.innerHTML =
-    '<div id="hfw-drag" style="cursor:grab;padding:10px 12px 6px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9aa0a6;display:flex;justify-content:space-between;align-items:center;"><span>Focus</span><span id="hfw-close" style="cursor:pointer;font-size:14px;line-height:1;">×</span></div>' +
-    '<div id="hfw-time" style="text-align:center;font-size:34px;font-weight:700;font-variant-numeric:tabular-nums;">25:00</div>' +
-    '<div id="hfw-status" style="text-align:center;font-size:12px;color:#9aa0a6;padding:2px 10px 10px;">Idle</div>' +
-    '<div style="display:flex;gap:6px;padding:0 10px 12px;"><button id="hfw-start" style="flex:1;background:#f0b429;color:#141414;border:0;border-radius:8px;padding:7px 0;font-size:13px;font-weight:700;cursor:pointer;">Start</button><button id="hfw-open" style="flex:1;background:#262b36;color:#e6e6e6;border:0;border-radius:8px;padding:7px 0;font-size:13px;font-weight:600;cursor:pointer;">Open</button></div>'
+    '<div class="hfw-head" id="hfw-drag"><span class="hfw-phase" id="hfw-phase">Idle</span><button class="hfw-close" id="hfw-close" aria-label="Hide floating widget">' + ICON_X + '</button></div>' +
+    '<div class="hfw-ringwrap"><svg class="hfw-ring" viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">' +
+    '<circle cx="60" cy="60" r="52" stroke="' + BORDER + '"/>' +
+    '<circle id="hfw-ring" cx="60" cy="60" r="52" stroke="' + BORDER + '" stroke-linecap="round" stroke-dasharray="' + RING_C_FLOAT + '" stroke-dashoffset="' + RING_C_FLOAT + '"/>' +
+    '</svg><div class="hfw-time" id="hfw-time">25:00</div></div>' +
+    '<div class="hfw-btns">' +
+    '<button class="hfw-btn primary" id="hfw-start" aria-label="Start focus">' + ICON_PLAY + '</button>' +
+    '<button class="hfw-btn ghost" id="hfw-skip" aria-label="Skip phase">' + ICON_SKIP + '</button>' +
+    '<button class="hfw-btn ghost" id="hfw-reset" aria-label="Reset timer">' + ICON_RESET + '</button>' +
+    '</div>' +
+    '<button class="hfw-details" id="hfw-details" aria-expanded="false"><span>Session stats</span><span class="hfw-chev">' + ICON_CHEVRON + '</span></button>' +
+    '<div id="hfw-details-body" hidden>' +
+    '<div class="hfw-srow"><span>Today</span><span id="hfw-stats-today">0 sessions · 0 min</span></div>' +
+    '<div class="hfw-srow"><span>This week</span><span id="hfw-stats-week">0 sessions · 0 min</span></div>' +
+    '<div class="hfw-srow"><span>Day streak</span><span id="hfw-stats-streak">0 days</span></div>' +
+    '<p class="hfw-empty" id="hfw-empty" hidden>No focus sessions yet today — start your first one.</p>' +
+    '<a class="hfw-open" id="hfw-open">Open full page</a>' +
+    '</div>'
   document.body.appendChild(root)
   floatRoot = root
+  root._payload = null
 
-  // Position with explicit left/top from the VIEWPORT, never right/bottom:
-  // the host app has transformed ancestors, which make `position:fixed`
-  // resolve `right` against a container wider than the viewport — the
-  // card used to hang half off-screen. A saved position is clamped back
-  // inside the current viewport, so a stale value from a wider window
-  // can never strand the widget off-screen again.
-  const FLOAT_W = 212
-  function clampFloat(x, y) {
-    const h = root.offsetHeight || 170
-    return {
-      x: Math.max(8, Math.min(x, window.innerWidth - FLOAT_W - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - h - 8))
-    }
+  // Position in VIEWPORT coordinates. The host app has transformed
+  // ancestors, so `position:fixed` resolves against a container that
+  // is wider than the viewport and offset from its origin — plain
+  // left/top values land in the wrong place. Measure the real offset
+  // once (getBoundingClientRect is always viewport-relative) and
+  // correct every placement by it.
+  function placeFloat(vx, vy) {
+    const h = root.offsetHeight || 260
+    vx = Math.max(8, Math.min(vx, window.innerWidth - 212 - 8))
+    vy = Math.max(8, Math.min(vy, window.innerHeight - h - 8))
+    const rect = root.getBoundingClientRect()
+    const dx = rect.left - (parseFloat(root.style.left) || 0)
+    const dy = rect.top - (parseFloat(root.style.top) || 0)
+    root.style.left = (vx - dx) + 'px'
+    root.style.top = (vy - dy) + 'px'
   }
   const saved = storageGet(ctx, FLOAT_STORAGE_KEY, null)
-  const placed = (saved && typeof saved.x === 'number' && typeof saved.y === 'number')
-    ? clampFloat(saved.x, saved.y)
-    : clampFloat(window.innerWidth - FLOAT_W - 16, window.innerHeight - (root.offsetHeight || 170) - 16)
-  root.style.left = placed.x + 'px'
-  root.style.top = placed.y + 'px'
-  root.style.right = 'auto'
-  root.style.bottom = 'auto'
+  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
+    placeFloat(saved.x, saved.y)
+  } else {
+    placeFloat(window.innerWidth - 212 - 16, window.innerHeight - (root.offsetHeight || 260) - 16)
+  }
+  function onResize() {
+    const rect = root.getBoundingClientRect()
+    placeFloat(rect.left, rect.top)
+  }
+  window.addEventListener('resize', onResize)
+  root._onResize = onResize
   const drag = root.querySelector('#hfw-drag')
   let dragState = null
   drag.addEventListener('pointerdown', (e) => {
-    dragState = { x: e.clientX, y: e.clientY, left: root.offsetLeft, top: root.offsetTop }
+    if (e.target && e.target.closest && e.target.closest('#hfw-close')) return
+    const rect = root.getBoundingClientRect()
+    dragState = { x: e.clientX, y: e.clientY, vx: rect.left, vy: rect.top }
     drag.style.cursor = 'grabbing'
-    drag.setPointerCapture(e.pointerId)
+    try { drag.setPointerCapture(e.pointerId) } catch (err) {}
   })
   drag.addEventListener('pointermove', (e) => {
     if (!dragState) return
-    // Keep the whole card on-screen while dragging (same clamp as mount).
-    const p = clampFloat(dragState.left + e.clientX - dragState.x, dragState.top + e.clientY - dragState.y)
-    root.style.left = p.x + 'px'
-    root.style.top = p.y + 'px'
-    root.style.right = 'auto'
-    root.style.bottom = 'auto'
+    placeFloat(dragState.vx + e.clientX - dragState.x, dragState.vy + e.clientY - dragState.y)
   })
   drag.addEventListener('pointerup', () => {
     drag.style.cursor = 'grab'
     if (dragState) {
-      storageSet(ctx, FLOAT_STORAGE_KEY, { x: root.offsetLeft, y: root.offsetTop })
+      const rect = root.getBoundingClientRect()
+      storageSet(ctx, FLOAT_STORAGE_KEY, { x: Math.round(rect.left), y: Math.round(rect.top) })
       dragState = null
     }
   })
-  root.querySelector('#hfw-close').addEventListener('click', () => {
+  root.querySelector('#hfw-close').addEventListener('click', (e) => {
+    e.stopPropagation()
     storageSet(ctx, FLOAT_VISIBLE_KEY, false)
     unmountFloatingWidget()
   })
   root.querySelector('#hfw-open').addEventListener('click', () => host.navigate('/focus-widget'))
-  root.querySelector('#hfw-start').addEventListener('click', async () => {
-    const port = await ensureWidgetPort()
-    await postControl(port, 'start')
+  root.querySelector('#hfw-details').addEventListener('click', () => {
+    const body = root.querySelector('#hfw-details-body')
+    const open = body.hidden
+    body.hidden = !open
+    root.querySelector('#hfw-details').setAttribute('aria-expanded', String(open))
+    if (open) updateFloatDetails()
   })
+  // The start/pause button's action is wired by updateFloat on every
+  // poll (it flips between start and pause); no second listener here.
   void pollOnce()
 }
 
 function unmountFloatingWidget() {
-  if (floatRoot && floatRoot.parentNode) floatRoot.parentNode.removeChild(floatRoot)
+  if (floatRoot) {
+    if (floatRoot._onResize) {
+      try { window.removeEventListener('resize', floatRoot._onResize) } catch (e) {}
+    }
+    if (floatRoot.parentNode) floatRoot.parentNode.removeChild(floatRoot)
+  }
   floatRoot = null
   floatCtx = null
 }
 
 // --- status-bar chip -------------------------------------------------
 function FocusChip() {
-  const chip = useValue(chipAtom)
-  return jsx('button', {
-    type: 'button',
-    className: 'px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
-    title: chip.title,
-    onClick: () => host.navigate('/focus-widget'),
-    children: chip.label
+  const data = useValue(chipDataAtom)
+  const open = useValue(chipOpenAtom)
+  const st = data && data.timer
+  const running = !!(st && st.running)
+  const label = st ? fmt(st.remaining_s) : '--:--'
+  const dotColor = running ? ACCENT : '#9CA3AF'
+  const title = st
+    ? (st.phase === 'focus' ? 'Focus ' + st.focus_completed + '/' + st.sessions_before_long_break : phaseLabel(st.phase)) + ' · ' + label + ' left — click for stats'
+    : 'Focus Widget — server not running'
+  function toggle() {
+    const next = !open
+    chipOpenAtom.set(next)
+    if (next && typeof document !== 'undefined' && !chipOutsideListener) {
+      chipOutsideListener = (e) => {
+        if (e.target && e.target.closest && !e.target.closest('[data-focus-chip]')) {
+          chipOpenAtom.set(false)
+        }
+      }
+      document.addEventListener('click', chipOutsideListener)
+    }
+  }
+  const stats = (data && data.stats) || {}
+  const popover = open ? jsx('div', {
+    style: { position: 'absolute', bottom: 'calc(100% + 8px)', right: 0, width: 232, background: SURFACE, color: INK, border: '1px solid ' + BORDER, borderRadius: 12, boxShadow: '0 4px 16px rgba(31,41,55,.08)', padding: 12, zIndex: 9999, fontFamily: '-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif', textAlign: 'left' },
+    children: [
+      jsx('div', { key: 'h', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }, children: [
+        jsx('span', { key: 'p', style: { fontSize: 12, fontWeight: 600, letterSpacing: '.14em', textTransform: 'uppercase', color: running ? ACCENT : MUTED }, children: st ? (st.phase === 'focus' ? (running ? 'Focus' : 'Paused') : st.phase === 'short_break' || st.phase === 'long_break' ? 'Break' : 'Idle') : 'Idle' }),
+        jsx('button', { key: 'x', type: 'button', 'aria-label': 'Close', onClick: () => chipOpenAtom.set(false), style: { border: 0, background: 'none', color: MUTED, cursor: 'pointer', padding: 4, display: 'inline-flex' }, dangerouslySetInnerHTML: { __html: ICON_X } })
+      ] }),
+      jsx('div', { key: 't', style: { fontSize: 28, fontWeight: 700, fontVariantNumeric: 'tabular-nums', marginBottom: 8 }, children: label }),
+      jsx('div', { key: 'r1', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'Today' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.today_sessions || 0) + ' sessions · ' + (stats.today_minutes || 0) + ' min' })] }),
+      jsx('div', { key: 'r2', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'This week' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.week_sessions || 0) + ' sessions · ' + (stats.week_minutes || 0) + ' min' })] }),
+      jsx('div', { key: 'r3', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, borderBottom: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'Day streak' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.streak_days || 0) + ' days' })] }),
+      jsx('button', { key: 'o', type: 'button', onClick: () => { chipOpenAtom.set(false); host.navigate('/focus-widget') }, style: { width: '100%', minHeight: 44, marginTop: 8, background: ACCENT, color: '#FFFFFF', border: 0, borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' }, children: 'Open full page' })
+    ]
+  }) : null
+  return jsx('div', {
+    'data-focus-chip': '1',
+    style: { position: 'relative', display: 'inline-flex', alignItems: 'center' },
+    children: [
+      jsx('button', {
+        key: 'chip',
+        type: 'button',
+        className: 'px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
+        title: title,
+        onClick: toggle,
+        children: [
+          jsx('span', { key: 'd', style: { display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: dotColor, marginRight: 6, verticalAlign: '1px' } }),
+          jsx('span', { key: 't', style: { fontVariantNumeric: 'tabular-nums', color: INK }, children: label })
+        ]
+      }),
+      popover
+    ]
   })
 }
 
 // --- full page (SandboxedFrame, Aegis pattern) -----------------------
-function FocusWidgetPage() {
+function FocusWidgetPage(props) {
   const widgetUrl = useValue(widgetUrlAtom)
+  const path = (props && props.path) || ''
   if (!widgetUrl) {
     void ensureWidgetPort()
     return jsx('div', {
-      style: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: '#8b949e' },
+      style: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%', color: MUTED },
       children: 'Loading Focus Widget…'
     })
   }
   return jsx('div', {
     style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%' },
     children: jsx(SandboxedFrame, {
-      src: widgetUrl,
+      src: widgetUrl + path,
       title: 'Focus Widget — Pomodoro',
       style: { flex: '1 1 auto', width: '100%', height: '100%', border: '0' }
     })
@@ -363,6 +527,12 @@ export default {
         render: () => jsx(FocusWidgetPage, {})
       },
       {
+        id: 'settings-page',
+        area: ROUTES_AREA,
+        data: { path: '/focus-widget/settings' },
+        render: () => jsx(FocusWidgetPage, { path: 'settings' })
+      },
+      {
         id: 'nav',
         area: SIDEBAR_NAV_AREA,
         order: 61,
@@ -376,6 +546,16 @@ export default {
           label: 'Open Focus Widget',
           keywords: ['focus', 'pomodoro', 'timer', 'widget', 'break'],
           run: () => host.navigate('/focus-widget')
+        }
+      },
+      {
+        id: 'settings',
+        area: PALETTE_AREA,
+        data: {
+          id: 'hermes-focus-widget.settings',
+          label: 'Focus Widget: Settings',
+          keywords: ['focus', 'pomodoro', 'settings', 'timer'],
+          run: () => host.navigate('/focus-widget/settings')
         }
       },
       {
@@ -402,7 +582,7 @@ export default {
         ctx.registerSettingsPage({
           id: 'focus-widget-settings',
           title: 'Focus Widget',
-          render: () => jsx(FocusWidgetPage, {})
+          render: () => jsx(FocusWidgetPage, { path: 'settings' })
         })
       } catch (e) { /* settings page is optional */ }
     }
