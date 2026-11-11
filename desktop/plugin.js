@@ -343,21 +343,26 @@ function mountFloatingWidget(ctx) {
   floatRoot = root
   root._payload = null
 
-  // Position in VIEWPORT coordinates. The host app has transformed
-  // ancestors, so `position:fixed` resolves against a container that
-  // is wider than the viewport and offset from its origin — plain
-  // left/top values land in the wrong place. Measure the real offset
-  // once (getBoundingClientRect is always viewport-relative) and
-  // correct every placement by it.
+  // Position in VIEWPORT coordinates. The host lays the float out
+  // with an offset the DOM rect does not predict (measured live:
+  // the rendered card lands ~(+138, +80) from its rect, a transformed
+  // ancestor the rect does not account for). So place, MEASURE where
+  // it actually landed, and correct by the residual — up to 3 rounds.
+  // This converges for a constant offset and for a scale factor alike.
   function placeFloat(vx, vy) {
     const h = root.offsetHeight || 260
     vx = Math.max(8, Math.min(vx, window.innerWidth - 212 - 8))
     vy = Math.max(8, Math.min(vy, window.innerHeight - h - 8))
-    const rect = root.getBoundingClientRect()
-    const dx = rect.left - (parseFloat(root.style.left) || 0)
-    const dy = rect.top - (parseFloat(root.style.top) || 0)
-    root.style.left = (vx - dx) + 'px'
-    root.style.top = (vy - dy) + 'px'
+    root.style.left = vx + 'px'
+    root.style.top = vy + 'px'
+    for (let i = 0; i < 3; i++) {
+      const r = root.getBoundingClientRect()
+      const dx = vx - r.left
+      const dy = vy - r.top
+      if (Math.abs(dx) < 2 && Math.abs(dy) < 2) break
+      root.style.left = ((parseFloat(root.style.left) || 0) + dx) + 'px'
+      root.style.top = ((parseFloat(root.style.top) || 0) + dy) + 'px'
+    }
   }
   const saved = storageGet(ctx, FLOAT_STORAGE_KEY, null)
   if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
@@ -421,6 +426,30 @@ function unmountFloatingWidget() {
   floatCtx = null
 }
 
+// Nudge the chip popover into place: same unpredicted host offset as
+// the float — measure where it actually landed and correct by the
+// residual, up to 3 rounds. Target: popover's right edge meets the
+// chip button's right edge, bottom 8px above the chip's top.
+function nudgePopoverIntoView() {
+  if (typeof document === 'undefined') return
+  for (let i = 0; i < 3; i++) {
+    const pop = document.querySelector('[data-focus-popover]')
+    const btn = document.querySelector('[data-focus-chip] button')
+    if (!pop || !btn) return
+    const pr = pop.getBoundingClientRect()
+    const br = btn.getBoundingClientRect()
+    const dx = br.right - pr.right
+    const dy = (br.top - 8) - pr.bottom
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return
+    const curLeft = parseFloat(pop.style.left)
+    const curTop = parseFloat(pop.style.top)
+    pop.style.right = 'auto'
+    pop.style.bottom = 'auto'
+    pop.style.left = ((Number.isFinite(curLeft) ? curLeft : pr.left) + dx) + 'px'
+    pop.style.top = ((Number.isFinite(curTop) ? curTop : pr.top) + dy) + 'px'
+  }
+}
+
 // --- status-bar chip -------------------------------------------------
 function FocusChip() {
   const data = useValue(chipDataAtom)
@@ -435,6 +464,13 @@ function FocusChip() {
   function toggle() {
     const next = !open
     chipOpenAtom.set(next)
+    if (next) {
+      // The popover anchors to the chip, but the host lays it out with
+      // the same unpredicted offset as the float: measure where it
+      // actually landed and nudge it so its right edge meets the chip's
+      // right edge and its bottom sits just above the chip.
+      requestAnimationFrame(() => requestAnimationFrame(() => nudgePopoverIntoView()))
+    }
     if (next && typeof document !== 'undefined' && !chipOutsideListener) {
       chipOutsideListener = (e) => {
         if (e.target && e.target.closest && !e.target.closest('[data-focus-chip]')) {
@@ -446,6 +482,7 @@ function FocusChip() {
   }
   const stats = (data && data.stats) || {}
   const popover = open ? jsx('div', {
+    'data-focus-popover': '1',
     style: { position: 'absolute', bottom: 'calc(100% + 8px)', right: 0, width: 232, background: SURFACE, color: INK, border: '1px solid ' + BORDER, borderRadius: 12, boxShadow: '0 4px 16px rgba(31,41,55,.08)', padding: 12, zIndex: 9999, fontFamily: '-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif', textAlign: 'left' },
     children: [
       jsx('div', { key: 'h', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }, children: [
