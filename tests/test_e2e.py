@@ -121,6 +121,11 @@ class TestAgentAwareE2E(unittest.TestCase):
         out = ctx.hooks["transform_llm_output"](output="answer")
         self.assertEqual(out, "answer")  # passthrough, unmodified
         self.assertIsNotNone(timer.last_activity_at)
+        ctx.hooks["post_api_request"](
+            task_id="t1", turn_id="r1", session_id="s", model="m",
+            provider="p", api_call_count=1, finish_reason="stop",
+        )
+        self.assertIsNotNone(timer.last_activity_at)
 
     def test_tool_status_reports_values(self):
         ctx = StrictFakeContext(config={"focus_minutes": 5})

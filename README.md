@@ -111,7 +111,11 @@ Check it on your own Desktop if the strip is not visible.
 
 ## How agent-awareness works
 
-The agent-side plugin registers hooks (`pre_llm_call`, `pre_tool_call`, `transform_llm_output`, `on_session_start`). Every hook call stamps the last-activity time. The timer thread ticks once a second; in agent-aware focus mode a second only counts when the last activity is within the idle threshold (default 120 s). In manual mode every second counts. Breaks always count wall-clock time — a break is a break.
+The agent-side plugin registers hooks (`pre_llm_call`, `pre_tool_call`, `transform_llm_output`, `post_api_request`, `on_session_start`). Every hook call stamps the last-activity time. The timer thread ticks once a second; in agent-aware focus mode a second only counts when the last activity is within the idle threshold (default 120 s). In manual mode every second counts. Breaks always count wall-clock time — a break is a break.
+
+Desktop chat turns execute in the Desktop's own `hermes serve` backend, a separate process from the gateway that serves the widget. Both processes run this plugin and share the same state file: each hook call stamps the file immediately, and each process folds the newest stamp back into its timer on every tick, so the widget sees activity from either process within about a second. Only the activity timestamp is shared — phase, elapsed time and settings stay local to each process.
+
+Live on Hermes 0.21.5 (12 Nov 2026): with a fresh activity stamp the focus timer counted 0 → 116 s and froze at 116 s once the stamp aged past the 120 s idle threshold, and the chip popover showed the live 23:04. That stamp came from gateway-side activity. The Desktop-turn stamp through `post_api_request` is implemented and verified in-process (live-load 13/13), but a scripted end-to-end Desktop turn has not completed in this environment — the Desktop composer unmounts during the landing-page settle faster than scripted input can reach it — so that last link awaits a manual check: use the timer during a real chat and watch it count.
 
 State (timer phase, elapsed seconds, settings, session log) is stored as JSON in `~/.hermes/plugin-data/hermes-focus-widget/focus-state.json`, written atomically, and restored on gateway restart — a session in progress survives a restart.
 
@@ -120,6 +124,7 @@ State (timer phase, elapsed seconds, settings, session log) is stored as JSON in
 - **Agent activity is not human focus.** The timer knows when the *agent* is working, not whether *you* are focused. If you stare out the window while the agent runs, the timer still counts.
 - **It cannot see you typing outside Hermes.** Activity is only what the agent observes through its hooks. Work you do in another app is invisible to it — use manual mode for that.
 - **Idle threshold is a heuristic.** The default 120 s means a gap of up to two minutes between agent actions still counts as active. Shorten it if you want stricter accounting.
+- **Desktop-turn stamp awaits a manual check.** The `post_api_request` hook and the cross-process stamp sharing are implemented and verified in-process, but a scripted end-to-end Desktop turn has not completed in this environment (the Desktop composer unmounts during the landing-page settle faster than scripted input can reach it). Use the timer during a real chat and watch it count; manual mode works fully in the meantime.
 - **Local installs only.** The widget UI is served on loopback (`127.0.0.1`); if Desktop connects to a remote gateway, the floating widget and chip cannot reach it and will say so — the full page is served from the same loopback server and has the same limit.
 - **One timer per gateway.** Sessions are recorded per gateway, not per chat session or profile.
 
@@ -129,13 +134,13 @@ State (timer phase, elapsed seconds, settings, session log) is stored as JSON in
 - Credentials: none read, none stored, none required.
 - Reads outside the plugin's own data: none (the plugin only reads its own state file).
 - Shell commands / long-running background processes: one daemon thread for the 1-second timer tick and one loopback HTTP server thread, both inside the gateway process; both stop with the gateway.
-- Data stored: `~/.hermes/plugin-data/hermes-focus-widget/pomodoro-state.json` (timer state, settings, session log). No telemetry leaves the machine.
+- Data stored: `~/.hermes/plugin-data/hermes-focus-widget/focus-state.json` (timer state, settings, session log). No telemetry leaves the machine.
 - No self-updating code. Updates reach users only through a new release.
 
 ## Development
 
 ```bash
-python3 -m unittest discover -s tests -t .   # 55 tests, no dependencies
+python3 -m unittest discover -s tests -t .   # 69 tests, no dependencies
 node --check desktop/plugin.js               # desktop surface syntax
 ```
 

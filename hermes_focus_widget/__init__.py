@@ -2,7 +2,14 @@
 
 Agent side (this module):
 - hooks (on_session_start, pre_llm_call, pre_tool_call,
-  transform_llm_output) record agent activity timestamps;
+  transform_llm_output, post_api_request) record agent activity
+  timestamps;
+- activity is shared across the two processes that run this plugin
+  (the gateway, which serves /api/state to the widget, and the
+  Desktop's own ``hermes serve`` backend, where Desktop chat turns
+  execute): each hook stamps the shared state file immediately, and
+  each process folds the newest stamp back in on every tick, so the
+  widget sees turns from either process within a second;
 - a loopback-only HTTP server (default 127.0.0.1:18778) serves the widget
   page and a small JSON API (/api/state, /api/control, /api/settings);
 - one tool (focus_timer) exposes status/start/pause/resume/skip/reset/
@@ -36,6 +43,7 @@ __all__ = [
     "pre_llm_call_hook",
     "pre_tool_call_hook",
     "transform_llm_output_hook",
+    "post_api_request_hook",
     "tool_focus_timer",
 ]
 
@@ -114,28 +122,63 @@ def get_timer(config: Optional[Dict[str, Any]] = None) -> FocusTimer:
     return _TIMER
 
 
+def _merge_disk_activity(timer: FocusTimer) -> None:
+    """Fold the newest activity stamp from the shared state file in.
+
+    The plugin runs in TWO processes at once: the gateway (which serves
+    /api/state to the widget) and the Desktop's own ``hermes serve``
+    backend (where Desktop chat turns execute). Each process has its own
+    in-memory timer, but both share one state file. A stamp that lands
+    in one process must reach the other, or the widget never sees
+    Desktop turns. Only ``last_activity_at`` is merged — never phase,
+    elapsed, running or settings, which stay local to each process so
+    the two tick loops cannot fight over control state. The merge is a
+    max: activity timestamps only move forward, so it is idempotent
+    and can never regress the timer. Best effort, never raises.
+    """
+    try:
+        disk_last = load_state().get("last_activity_at")
+        if isinstance(disk_last, (int, float)):
+            if timer.last_activity_at is None or disk_last > timer.last_activity_at:
+                timer.last_activity_at = disk_last
+    except Exception:
+        pass
+
+
 def _persist() -> None:
+    """Save the timer; merge the disk stamp first so a save can never
+    regress ``last_activity_at`` to an older value (two processes save
+    the same file on their own cadences)."""
     try:
         with _TIMER_LOCK:
             if _TIMER is not None:
+                _merge_disk_activity(_TIMER)
                 save_state(_TIMER.to_dict())
     except Exception:
         pass
 
 
 def _tick_loop() -> None:
-    """Advance the timer once a second; persist every 30 ticks."""
+    """Advance the timer once a second; persist every 30 ticks.
+
+    Each tick first folds in activity stamped by the other process
+    (see _merge_disk_activity), so a Desktop turn that stamped the
+    serve backend's timer shows up in this process within a second.
+    The save happens after releasing the lock: _persist() takes it.
+    """
     count = 0
     while True:
         try:
             time.sleep(1)
             with _TIMER_LOCK:
                 timer = get_timer()
+                _merge_disk_activity(timer)
                 before = (timer.phase, timer.elapsed_s)
                 timer.tick()
                 count += 1
-                if before != (timer.phase, timer.elapsed_s) or count % 30 == 0:
-                    save_state(timer.to_dict())
+                need_save = before != (timer.phase, timer.elapsed_s) or count % 30 == 0
+            if need_save:
+                _persist()
         except Exception:
             time.sleep(1)
 
@@ -298,8 +341,17 @@ def ensure_widget_server_running(port: int = DEFAULT_PORT) -> str:
 
 # -- hooks (agent activity) ------------------------------------------
 def _note_activity() -> None:
+    """Stamp activity in memory AND on disk, immediately.
+
+    The disk write is the cross-process signal: the Desktop's serve
+    backend and the gateway are separate processes sharing one state
+    file, so a stamp that only lives in memory is invisible to the
+    other side. Persisting here (instead of waiting for the tick
+    loop's 30 s cadence) keeps the delay under a second.
+    """
     try:
         get_timer().mark_activity()
+        _persist()
     except Exception:
         pass
 
@@ -335,6 +387,28 @@ def pre_tool_call_hook(
 def transform_llm_output_hook(output: Any = "", **kwargs: Any) -> Any:
     _note_activity()
     return output
+
+
+def post_api_request_hook(**kwargs: Any) -> None:
+    """Stamp activity on every completed model API response.
+
+    ``pre_llm_call`` fires in the turn-preparation path, but Desktop
+    chat turns do not reach that dispatcher (verified live 12 Nov
+    2026: three real Desktop turns left ``last_activity_at`` frozen
+    while the gateway's own background review stamped it). The
+    post-response hook fires inside ``normalize_model_response`` on
+    every model API response (agent/turn_response_intake.py
+    ``_fire_post_api_request_hook`` — the same hook budget-leash uses
+    for metering), so it is the second activity signal. Desktop chat
+    turns execute in the Desktop's own ``hermes serve`` backend, not
+    in the gateway process, so this hook's stamp lands in the serve
+    process's timer; it reaches the gateway (and the widget) through
+    the shared state file (see _merge_disk_activity). The handler
+    takes **kwargs only: the dispatcher passes ~20 keyword arguments
+    (task_id, turn_id, model, provider, usage, ...) and none of them
+    is needed to stamp activity.
+    """
+    _note_activity()
 
 
 # -- tool -------------------------------------------------------------
@@ -439,6 +513,7 @@ def register(ctx: Any) -> None:
         ctx.register_hook("pre_llm_call", pre_llm_call_hook)
         ctx.register_hook("pre_tool_call", pre_tool_call_hook)
         ctx.register_hook("transform_llm_output", transform_llm_output_hook)
+        ctx.register_hook("post_api_request", post_api_request_hook)
 
     if hasattr(ctx, "register_tool"):
         # One registration in the single form matching the 0.21.5

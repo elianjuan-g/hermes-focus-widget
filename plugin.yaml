@@ -25,6 +25,7 @@ provides:
     - pre_llm_call
     - pre_tool_call
     - transform_llm_output
+    - post_api_request
   tools:
     - focus_timer
   commands:
@@ -42,6 +43,7 @@ provides_hooks:
   - pre_llm_call
   - pre_tool_call
   - transform_llm_output
+  - post_api_request
 
 config_schema:
   focus_minutes:

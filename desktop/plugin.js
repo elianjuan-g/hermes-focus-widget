@@ -82,6 +82,8 @@ let pollCtx = null
 let lastPhase = null
 let lastNotifiedPhase = null
 let chipOutsideListener = null
+let chipPopoverNode = null
+let lastPayload = null // latest /api/state payload, for the chip popover
 
 // Lucide-style icons (stroke 2, 24px grid, currentColor). No emoji.
 const ICON_PLAY = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>'
@@ -172,7 +174,9 @@ async function pollOnce() {
   }
   const st = (payload && payload.timer) || null
   chipDataAtom.set(payload && st ? { timer: st, stats: payload.stats || {} } : null)
+  lastPayload = payload
   if (floatRoot) floatRoot._payload = payload
+  if (chipPopoverNode) updateChipPopover()
   if (st && st.phase && st.phase !== lastPhase) {
     if (lastPhase !== null) notifyPhaseChange(st.phase)
     lastPhase = st.phase
@@ -426,27 +430,111 @@ function unmountFloatingWidget() {
   floatCtx = null
 }
 
-// Nudge the chip popover into place: same unpredicted host offset as
-// the float — measure where it actually landed and correct by the
-// residual, up to 3 rounds. Target: popover's right edge meets the
-// chip button's right edge, bottom 8px above the chip's top.
-function nudgePopoverIntoView() {
-  if (typeof document === 'undefined') return
+// --- chip popover (body portal) -------------------------------------
+// The popover used to render inside the chip's React tree, positioned
+// absolute above the chip — but the status-bar host clips anything
+// outside its own box (overflow:hidden), so only a sliver of the card
+// painted (verified live: full 232x254 rect in the DOM, invisible on
+// screen; a nudge loop could not help because the clip, not the
+// position, was the problem). The fix: render the popover as a plain
+// DOM node appended to document.body with position:fixed, outside the
+// clipping ancestor entirely. Placement reuses the float's
+// measure-and-correct loop: place by the chip's rect, measure where it
+// actually landed, correct the residual (up to 3 rounds), then clamp
+// inside the viewport.
+function mountChipPopover() {
+  if (typeof document === 'undefined' || chipPopoverNode) return
+  const btn = document.querySelector('[data-focus-chip] button')
+  if (!btn) return
+  const node = document.createElement('div')
+  node.setAttribute('data-focus-popover', '1')
+  node.style.cssText = 'position:fixed;z-index:10000;width:232px;background:' + SURFACE + ';color:' + INK + ';border:1px solid ' + BORDER + ';border-radius:12px;box-shadow:0 4px 16px rgba(31,41,55,.08);padding:12px;font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;text-align:left;'
+  node.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;"><span id="hfw-pop-phase" style="font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:' + MUTED + ';">Idle</span><button id="hfw-pop-close" type="button" aria-label="Close" style="border:0;background:none;color:' + MUTED + ';cursor:pointer;padding:4px;display:inline-flex;">' + ICON_X + '</button></div>' +
+    '<div id="hfw-pop-time" style="font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;margin-bottom:8px;">--:--</div>' +
+    '<div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid ' + BORDER + ';font-size:13px;"><span style="color:' + MUTED + ';">Today</span><span id="hfw-pop-today" style="font-weight:600;">0 sessions · 0 min</span></div>' +
+    '<div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid ' + BORDER + ';font-size:13px;"><span style="color:' + MUTED + ';">This week</span><span id="hfw-pop-week" style="font-weight:600;">0 sessions · 0 min</span></div>' +
+    '<div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid ' + BORDER + ';border-bottom:1px solid ' + BORDER + ';font-size:13px;"><span style="color:' + MUTED + ';">Day streak</span><span id="hfw-pop-streak" style="font-weight:600;">0 days</span></div>' +
+    '<button id="hfw-pop-open" type="button" style="width:100%;min-height:44px;margin-top:8px;background:' + ACCENT + ';color:#FFFFFF;border:0;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">Open full page</button>'
+  document.body.appendChild(node)
+  chipPopoverNode = node
+  node.querySelector('#hfw-pop-close').addEventListener('click', () => setChipOpen(false))
+  node.querySelector('#hfw-pop-open').addEventListener('click', () => { setChipOpen(false); host.navigate('/focus-widget') })
+  updateChipPopover()
+  placeChipPopover()
+  if (!chipOutsideListener) {
+    chipOutsideListener = (e) => {
+      if (e.target && e.target.closest && !e.target.closest('[data-focus-chip]') && !e.target.closest('[data-focus-popover]')) {
+        setChipOpen(false)
+      }
+    }
+    document.addEventListener('click', chipOutsideListener)
+  }
+}
+
+function placeChipPopover() {
+  if (!chipPopoverNode) return
+  const btn = document.querySelector('[data-focus-chip] button')
+  if (!btn) return
+  const br = btn.getBoundingClientRect()
+  const w = 232
+  const h = chipPopoverNode.offsetHeight || 254
+  // Target: right edge meets the chip's right edge; bottom 8px above
+  // the chip's top. Fall back below the chip when there is no room above.
+  let tx = br.right - w
+  let ty = br.top - 8 - h
+  if (ty < 8) ty = br.bottom + 8
+  tx = Math.max(8, Math.min(tx, window.innerWidth - w - 8))
+  ty = Math.max(8, Math.min(ty, window.innerHeight - h - 8))
+  chipPopoverNode.style.left = tx + 'px'
+  chipPopoverNode.style.top = ty + 'px'
   for (let i = 0; i < 3; i++) {
-    const pop = document.querySelector('[data-focus-popover]')
-    const btn = document.querySelector('[data-focus-chip] button')
-    if (!pop || !btn) return
-    const pr = pop.getBoundingClientRect()
-    const br = btn.getBoundingClientRect()
-    const dx = br.right - pr.right
-    const dy = (br.top - 8) - pr.bottom
-    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return
-    const curLeft = parseFloat(pop.style.left)
-    const curTop = parseFloat(pop.style.top)
-    pop.style.right = 'auto'
-    pop.style.bottom = 'auto'
-    pop.style.left = ((Number.isFinite(curLeft) ? curLeft : pr.left) + dx) + 'px'
-    pop.style.top = ((Number.isFinite(curTop) ? curTop : pr.top) + dy) + 'px'
+    const r = chipPopoverNode.getBoundingClientRect()
+    const dx = tx - r.left
+    const dy = ty - r.top
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) break
+    chipPopoverNode.style.left = ((parseFloat(chipPopoverNode.style.left) || 0) + dx) + 'px'
+    chipPopoverNode.style.top = ((parseFloat(chipPopoverNode.style.top) || 0) + dy) + 'px'
+  }
+}
+
+function updateChipPopover() {
+  if (!chipPopoverNode) return
+  const node = chipPopoverNode
+  const p = lastPayload
+  const st = (p && p.timer) || null
+  const stats = (p && p.stats) || {}
+  const running = !!(st && st.running)
+  const phaseEl = node.querySelector('#hfw-pop-phase')
+  const timeEl = node.querySelector('#hfw-pop-time')
+  if (phaseEl) {
+    phaseEl.textContent = st ? (st.phase === 'focus' ? (running ? 'Focus' : 'Paused') : st.phase === 'short_break' || st.phase === 'long_break' ? 'Break' : 'Idle') : 'Idle'
+    phaseEl.style.color = running ? ACCENT : MUTED
+  }
+  if (timeEl) timeEl.textContent = st ? fmt(st.remaining_s) : '--:--'
+  const set = (id, text) => { const el = node.querySelector(id); if (el) el.textContent = text }
+  set('#hfw-pop-today', (stats.today_sessions || 0) + ' sessions · ' + (stats.today_minutes || 0) + ' min')
+  set('#hfw-pop-week', (stats.week_sessions || 0) + ' sessions · ' + (stats.week_minutes || 0) + ' min')
+  set('#hfw-pop-streak', (stats.streak_days || 0) + ' days')
+}
+
+function unmountChipPopover() {
+  if (chipOutsideListener) {
+    try { document.removeEventListener('click', chipOutsideListener) } catch (e) {}
+    chipOutsideListener = null
+  }
+  if (chipPopoverNode) {
+    if (chipPopoverNode.parentNode) chipPopoverNode.parentNode.removeChild(chipPopoverNode)
+    chipPopoverNode = null
+  }
+}
+
+function setChipOpen(next) {
+  chipOpenAtom.set(next)
+  if (next) {
+    requestAnimationFrame(() => mountChipPopover())
+  } else {
+    unmountChipPopover()
   }
 }
 
@@ -462,40 +550,11 @@ function FocusChip() {
     ? (st.phase === 'focus' ? 'Focus ' + st.focus_completed + '/' + st.sessions_before_long_break : phaseLabel(st.phase)) + ' · ' + label + ' left — click for stats'
     : 'Focus Widget — server not running'
   function toggle() {
-    const next = !open
-    chipOpenAtom.set(next)
-    if (next) {
-      // The popover anchors to the chip, but the host lays it out with
-      // the same unpredicted offset as the float: measure where it
-      // actually landed and nudge it so its right edge meets the chip's
-      // right edge and its bottom sits just above the chip.
-      requestAnimationFrame(() => requestAnimationFrame(() => nudgePopoverIntoView()))
-    }
-    if (next && typeof document !== 'undefined' && !chipOutsideListener) {
-      chipOutsideListener = (e) => {
-        if (e.target && e.target.closest && !e.target.closest('[data-focus-chip]')) {
-          chipOpenAtom.set(false)
-        }
-      }
-      document.addEventListener('click', chipOutsideListener)
-    }
+    setChipOpen(!open)
   }
-  const stats = (data && data.stats) || {}
-  const popover = open ? jsx('div', {
-    'data-focus-popover': '1',
-    style: { position: 'absolute', bottom: 'calc(100% + 8px)', right: 0, width: 232, background: SURFACE, color: INK, border: '1px solid ' + BORDER, borderRadius: 12, boxShadow: '0 4px 16px rgba(31,41,55,.08)', padding: 12, zIndex: 9999, fontFamily: '-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif', textAlign: 'left' },
-    children: [
-      jsx('div', { key: 'h', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }, children: [
-        jsx('span', { key: 'p', style: { fontSize: 12, fontWeight: 600, letterSpacing: '.14em', textTransform: 'uppercase', color: running ? ACCENT : MUTED }, children: st ? (st.phase === 'focus' ? (running ? 'Focus' : 'Paused') : st.phase === 'short_break' || st.phase === 'long_break' ? 'Break' : 'Idle') : 'Idle' }),
-        jsx('button', { key: 'x', type: 'button', 'aria-label': 'Close', onClick: () => chipOpenAtom.set(false), style: { border: 0, background: 'none', color: MUTED, cursor: 'pointer', padding: 4, display: 'inline-flex' }, dangerouslySetInnerHTML: { __html: ICON_X } })
-      ] }),
-      jsx('div', { key: 't', style: { fontSize: 28, fontWeight: 700, fontVariantNumeric: 'tabular-nums', marginBottom: 8 }, children: label }),
-      jsx('div', { key: 'r1', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'Today' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.today_sessions || 0) + ' sessions · ' + (stats.today_minutes || 0) + ' min' })] }),
-      jsx('div', { key: 'r2', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'This week' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.week_sessions || 0) + ' sessions · ' + (stats.week_minutes || 0) + ' min' })] }),
-      jsx('div', { key: 'r3', style: { display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: '1px solid ' + BORDER, borderBottom: '1px solid ' + BORDER, fontSize: 13 }, children: [jsx('span', { key: 'a', style: { color: MUTED }, children: 'Day streak' }), jsx('span', { key: 'b', style: { fontWeight: 600 }, children: (stats.streak_days || 0) + ' days' })] }),
-      jsx('button', { key: 'o', type: 'button', onClick: () => { chipOpenAtom.set(false); host.navigate('/focus-widget') }, style: { width: '100%', minHeight: 44, marginTop: 8, background: ACCENT, color: '#FFFFFF', border: 0, borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' }, children: 'Open full page' })
-    ]
-  }) : null
+  // The popover is NOT rendered here: it is a body portal mounted by
+  // setChipOpen (see above) — rendering it inside this tree puts it
+  // under the status-bar host's overflow:hidden clip.
   return jsx('div', {
     'data-focus-chip': '1',
     style: { position: 'relative', display: 'inline-flex', alignItems: 'center' },
@@ -510,8 +569,7 @@ function FocusChip() {
           jsx('span', { key: 'd', style: { display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: dotColor, marginRight: 6, verticalAlign: '1px' } }),
           jsx('span', { key: 't', style: { fontVariantNumeric: 'tabular-nums', color: INK }, children: label })
         ]
-      }),
-      popover
+      })
     ]
   })
 }
@@ -631,6 +689,6 @@ export default {
         mountFloatingWidget(ctx)
       }
     } catch (e) { /* floating widget stays hidden */ }
-    ctx.onDispose(() => { unmountFloatingWidget(); stopPolling() })
+    ctx.onDispose(() => { unmountFloatingWidget(); unmountChipPopover(); stopPolling() })
   }
 }
