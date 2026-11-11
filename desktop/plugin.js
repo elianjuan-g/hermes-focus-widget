@@ -31,9 +31,23 @@
  * patching, no injected markup into the host UI (the floating widget
  * is its own root element appended to the body, like the balance
  * widget).
+ *
+ * Defensive loading (learned from a real Desktop run): the import list
+ * uses ONLY names the shipped Aegis desktop surface already proves
+ * exist — a named ESM import that the installed SDK does not export
+ * kills the whole module at link time, before register() ever runs.
+ * The status-bar chip therefore uses the plain area string
+ * 'statusBar.right' (the SDK doc's own hello-world example uses this
+ * string) instead of the STATUSBAR_AREAS constant. register() also
+ * registers the page/nav/palette FIRST and wraps the floating widget
+ * and polling in try/catch, so one failing surface can never take the
+ * others down with it.
  */
-import { atom, host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, STATUSBAR_AREAS, SandboxedFrame, useValue } from '@hermes/plugin-sdk'
+import { atom, host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, SandboxedFrame, useValue } from '@hermes/plugin-sdk'
 import { jsx } from 'react/jsx-runtime'
+
+// Plain area string (see header note): do NOT import STATUSBAR_AREAS.
+const STATUS_BAR_RIGHT_AREA = 'statusBar.right'
 
 const PLUGIN_ID = 'hermes-focus-widget'
 const PLUGIN_NAME = 'hermes-focus-widget'
@@ -179,15 +193,37 @@ function startPolling(ctx) {
   if (pollTimer) return
   pollCtx = ctx
   void pollOnce()
-  pollTimer = ctx.setInterval(pollOnce, POLL_MS)
+  // Scoped interval when the host provides one; a plain window timer
+  // as fallback on older hosts (cleaned up in stopPolling/onDispose).
+  if (ctx.setInterval) {
+    pollTimer = ctx.setInterval(pollOnce, POLL_MS)
+  } else {
+    pollTimer = setInterval(pollOnce, POLL_MS)
+  }
 }
 
 function stopPolling() {
   if (pollTimer && pollCtx) {
-    try { pollCtx.clearInterval ? pollCtx.clearInterval(pollTimer) : clearInterval(pollTimer) } catch (e) {}
+    try {
+      if (pollCtx.clearInterval) pollCtx.clearInterval(pollTimer)
+      else clearInterval(pollTimer)
+    } catch (e) {}
     pollTimer = null
     pollCtx = null
   }
+}
+
+function storageGet(ctx, key, fallback) {
+  try {
+    if (ctx.storage && ctx.storage.get) return ctx.storage.get(key, fallback)
+  } catch (e) { /* older host without storage: fall through */ }
+  return fallback
+}
+
+function storageSet(ctx, key, value) {
+  try {
+    if (ctx.storage && ctx.storage.set) ctx.storage.set(key, value)
+  } catch (e) { /* best effort */ }
 }
 
 // --- floating widget -------------------------------------------------
@@ -205,7 +241,7 @@ function mountFloatingWidget(ctx) {
   document.body.appendChild(root)
   floatRoot = root
 
-  const saved = ctx.storage.get(FLOAT_STORAGE_KEY, null)
+  const saved = storageGet(ctx, FLOAT_STORAGE_KEY, null)
   if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
     root.style.left = saved.x + 'px'
     root.style.top = saved.y + 'px'
@@ -231,12 +267,12 @@ function mountFloatingWidget(ctx) {
   drag.addEventListener('pointerup', () => {
     drag.style.cursor = 'grab'
     if (dragState) {
-      ctx.storage.set(FLOAT_STORAGE_KEY, { x: root.offsetLeft, y: root.offsetTop })
+      storageSet(ctx, FLOAT_STORAGE_KEY, { x: root.offsetLeft, y: root.offsetTop })
       dragState = null
     }
   })
   root.querySelector('#hfw-close').addEventListener('click', () => {
-    ctx.storage.set(FLOAT_VISIBLE_KEY, false)
+    storageSet(ctx, FLOAT_VISIBLE_KEY, false)
     unmountFloatingWidget()
   })
   root.querySelector('#hfw-open').addEventListener('click', () => host.navigate('/focus-widget'))
@@ -291,14 +327,13 @@ export default {
   description: 'Pomodoro widget that only counts focus time while the agent is working.',
   register(ctx) {
     void ensureWidgetPort()
-    startPolling(ctx)
-    if (ctx.storage.get(FLOAT_VISIBLE_KEY, true) !== false) {
-      mountFloatingWidget(ctx)
-    }
+    // Register the page/nav/palette/chip FIRST: the surfaces below
+    // (polling, floating widget) are best-effort and must never be
+    // able to take the core surfaces down with them.
     ctx.registerMany([
       {
         id: 'chip',
-        area: STATUSBAR_AREAS.right,
+        area: STATUS_BAR_RIGHT_AREA,
         order: 120,
         render: () => jsx(FocusChip, {})
       },
@@ -333,10 +368,10 @@ export default {
           keywords: ['focus', 'pomodoro', 'floating', 'widget'],
           run: () => {
             if (floatRoot) {
-              ctx.storage.set(FLOAT_VISIBLE_KEY, false)
+              storageSet(ctx, FLOAT_VISIBLE_KEY, false)
               unmountFloatingWidget()
             } else {
-              ctx.storage.set(FLOAT_VISIBLE_KEY, true)
+              storageSet(ctx, FLOAT_VISIBLE_KEY, true)
               mountFloatingWidget(ctx)
             }
           }
@@ -344,12 +379,22 @@ export default {
       }
     ])
     if (ctx.registerSettingsPage) {
-      ctx.registerSettingsPage({
-        id: 'focus-widget-settings',
-        title: 'Focus Widget',
-        render: () => jsx(FocusWidgetPage, {})
-      })
+      try {
+        ctx.registerSettingsPage({
+          id: 'focus-widget-settings',
+          title: 'Focus Widget',
+          render: () => jsx(FocusWidgetPage, {})
+        })
+      } catch (e) { /* settings page is optional */ }
     }
+    // Best-effort surfaces: any failure here must not undo the
+    // registrations above.
+    try { startPolling(ctx) } catch (e) { /* chip/float stay static */ }
+    try {
+      if (storageGet(ctx, FLOAT_VISIBLE_KEY, true) !== false) {
+        mountFloatingWidget(ctx)
+      }
+    } catch (e) { /* floating widget stays hidden */ }
     ctx.onDispose(() => { unmountFloatingWidget(); stopPolling() })
   }
 }
