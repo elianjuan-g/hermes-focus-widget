@@ -5,7 +5,7 @@ Adds one entry to the Hermes plugin catalog:
 ```yaml
 name: hermes-focus-widget
 repo: https://github.com/elianjuan-g/hermes-focus-widget
-sha: "46e25ccce0843c7f66a133481080921d07823598"
+sha: "1b6bdcf7330539a69a23733a545dabe7025dcf37"
 tier: community
 ```
 
@@ -21,7 +21,7 @@ A Pomodoro widget for Hermes Desktop that only counts focus time while the agent
 
 ## Verification
 
-- 55 unit + contract + persistence + end-to-end tests pass in the VM (`python3 -m unittest discover -s tests -t .`), including a scripted end-to-end scenario that proves agent-aware pause/resume with timer values (not label presence) and a restart test proving state survives a gateway restart.
+- 64 unit + contract + persistence + end-to-end tests pass in the VM (`python3 -m unittest discover -s tests -t .`), including a scripted end-to-end scenario that proves agent-aware pause/resume with timer values (not label presence) and a restart test proving state survives a gateway restart.
 - `hermes plugins validate` green on Hermes 0.21.5 (PC), live load verified through the real `PluginManager` (see repo README for the exact numbers).
 - `desktop/plugin.js` syntax-checked with `node --check`; imports only `@hermes/plugin-sdk` and `react/jsx-runtime`.
 
@@ -31,7 +31,7 @@ A Pomodoro widget for Hermes Desktop that only counts focus time while the agent
 - Credentials: none read, none stored, none required.
 - Reads outside the plugin's own data: none (the plugin only reads its own state file).
 - Shell commands / long-running background processes: one daemon thread for the 1-second timer tick and one loopback HTTP server thread, both inside the gateway process; both stop with the gateway.
-- Stored data: `~/.hermes/plugin-data/hermes-focus-widget/pomodoro-state.json` (timer state, settings, session log). No telemetry leaves the machine.
+- Stored data: `~/.hermes/plugin-data/hermes-focus-widget/focus-state.json` (timer state, settings, session log). No telemetry leaves the machine.
 - No self-updating code. Static `desktop/plugin.js`; updates reach users only through a SHA-bump PR here.
 - Screenshots are real captures from a live Hermes Desktop render (Playwright on the operator PC), not mockups.
 
