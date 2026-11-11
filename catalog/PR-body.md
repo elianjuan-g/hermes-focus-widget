@@ -5,7 +5,7 @@ Adds one entry to the Hermes plugin catalog:
 ```yaml
 name: hermes-focus-widget
 repo: https://github.com/elianjuan-g/hermes-focus-widget
-sha: "1b6bdcf7330539a69a23733a545dabe7025dcf37"
+sha: "be8be4277eec9ab9cac6358e7c2eab0c1843500b"
 tier: community
 ```
 
@@ -29,7 +29,7 @@ A Pomodoro widget for Hermes Desktop that only counts focus time while the agent
 
 Chip popover, live Desktop render (cropped to the popover; full screenshots in the repo):
 
-![Chip popover — live render](https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/1b6bdcf7330539a69a23733a545dabe7025dcf37/docs/screenshots/_chip-popover.png)
+![Chip popover — live render](https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/be8be4277eec9ab9cac6358e7c2eab0c1843500b/docs/screenshots/_chip-popover.png)
 
 ## Disclosure (rule 13)
 
