@@ -5,7 +5,7 @@ Adds one entry to the Hermes plugin catalog:
 ```yaml
 name: hermes-focus-widget
 repo: https://github.com/elianjuan-g/hermes-focus-widget
-sha: "5717961ce3bf8e46fe5625c273fbe4ff2a6eb584"
+sha: "46e25ccce0843c7f66a133481080921d07823598"
 tier: community
 ```
 

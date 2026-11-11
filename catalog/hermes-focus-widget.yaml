@@ -12,7 +12,7 @@
 name: hermes-focus-widget
 title: "Focus Widget"
 repo: https://github.com/elianjuan-g/hermes-focus-widget
-sha: "5717961ce3bf8e46fe5625c273fbe4ff2a6eb584"
+sha: "46e25ccce0843c7f66a133481080921d07823598"
 version: "1.0.0"
 description: >-
   A Pomodoro widget for Hermes Desktop that only counts focus time while
@@ -39,9 +39,9 @@ category: desktop
 requires_hermes: ">=0.21.5"
 docs_url: https://github.com/elianjuan-g/hermes-focus-widget
 screenshots:
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/5717961ce3bf8e46fe5625c273fbe4ff2a6eb584/docs/screenshots/focus-widget-floating.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/5717961ce3bf8e46fe5625c273fbe4ff2a6eb584/docs/screenshots/focus-widget-chip.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/5717961ce3bf8e46fe5625c273fbe4ff2a6eb584/docs/screenshots/focus-widget-page.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-floating.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-chip.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-page.png"
 readme: true
 known_issues:
   - "Agent activity is not human focus: the timer knows when the agent is working, not whether the operator is focused."
