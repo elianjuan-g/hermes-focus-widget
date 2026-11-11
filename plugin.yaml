@@ -28,8 +28,8 @@ provides:
   tools:
     - focus_timer
   commands:
-    - /focus
-    # /focus takes subcommands: start | pause | resume | stop | status
+    - /pomodoro
+    # /pomodoro takes subcommands: start | pause | resume | stop | status
     # | stats | reset (parsed from the command text by the handler).
 
 # Top-level provides_* lists: `hermes plugins validate` and the loader

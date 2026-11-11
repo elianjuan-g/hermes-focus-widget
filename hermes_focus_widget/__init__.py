@@ -379,7 +379,7 @@ _SUBCOMMANDS = {
 
 
 def _focus_command_handler(*args: Any, **kwargs: Any) -> str:
-    """``/focus <subcommand>`` — start | pause | resume | stop | status
+    """``/pomodoro <subcommand>`` — start | pause | resume | stop | status
     | stats | reset. The handler is defensive about how Hermes passes
     the command text: first positional string, or ``text``/``args``/
     ``input`` keyword. No text (or an unknown word) shows status plus
@@ -392,14 +392,14 @@ def _focus_command_handler(*args: Any, **kwargs: Any) -> str:
         if isinstance(kwargs.get(key), str):
             text = kwargs[key]
             break
-    words = text.replace("/focus", " ", 1).strip().split()
+    words = text.replace("/pomodoro", " ", 1).strip().split()
     sub = words[0].lower() if words else "status"
     action = _SUBCOMMANDS.get(sub)
     if action is None:
         return (
-            "Unknown /focus subcommand: "
+            "Unknown /pomodoro subcommand: "
             + sub
-            + ". Usage: /focus start | pause | resume | stop | status | stats | reset\n"
+            + ". Usage: /pomodoro start | pause | resume | stop | status | stats | reset\n"
             + tool_focus_timer(action="status")
         )
     if action == "reset":
@@ -463,7 +463,7 @@ def register(ctx: Any) -> None:
 
     if hasattr(ctx, "register_command"):
         ctx.register_command(
-            "/focus",
+            "/pomodoro",
             _focus_command_handler,
-            description="Focus Widget Pomodoro: /focus start | pause | resume | stop | status | stats | reset (widget: http://127.0.0.1:18778).",
+            description="Focus Widget Pomodoro: /pomodoro start | pause | resume | stop | status | stats | reset (widget: http://127.0.0.1:18778).",
         )

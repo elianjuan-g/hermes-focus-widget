@@ -137,7 +137,7 @@ class TestAgentAwareE2E(unittest.TestCase):
     def test_slash_command_subcommands(self):
         ctx = StrictFakeContext()
         plugin.register(ctx)
-        cmd = ctx.commands["/focus"]["handler"]
+        cmd = ctx.commands["/pomodoro"]["handler"]
         out = json.loads(cmd("status"))
         self.assertEqual(out["timer"]["phase"], "idle")
         out = cmd("start")
@@ -151,7 +151,7 @@ class TestAgentAwareE2E(unittest.TestCase):
         state = json.loads(cmd("status"))
         self.assertEqual(state["timer"]["phase"], "idle")
         out = cmd("bogus")
-        self.assertIn("Unknown /focus subcommand", out)
+        self.assertIn("Unknown /pomodoro subcommand", out)
         # No text at all -> status.
         out = json.loads(cmd())
         self.assertEqual(out["timer"]["phase"], "idle")

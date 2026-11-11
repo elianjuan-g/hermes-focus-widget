@@ -84,7 +84,7 @@ class TestRegisterContract(unittest.TestCase):
         for hook in ("on_session_start", "pre_llm_call", "pre_tool_call",
                      "transform_llm_output"):
             self.assertIn(hook, ctx.hooks)
-        self.assertIn("/focus", ctx.commands)
+        self.assertIn("/pomodoro", ctx.commands)
 
     def test_register_reads_config_via_get_config(self):
         ctx = StrictFakeContext(config={"focus_minutes": 50, "agent_aware": False})

@@ -22,14 +22,14 @@ description: >-
   agent idle, and resumes on the next activity; manual mode is a full
   classic wall-clock Pomodoro. Three Desktop surfaces (draggable
   floating widget, status-bar chip, full page), session log with
-  today/week totals and a day streak, and a /focus slash command.
+  today/week totals and a day streak, and a /pomodoro slash command.
   Disclosure — 100% local: no network calls, no accounts, no API keys,
   no credentials, no telemetry. The widget UI and its JSON API are
   served on loopback only (127.0.0.1:18778 by default); the Desktop
   surfaces poll that endpoint (floating widget and status-bar chip
   every 2 s, full page every 1 s). State lives in one JSON file under
   the Hermes plugin-data directory
-  (~/.hermes/plugin-data/hermes-focus-widget/focus-state.json), written
+  (~/.hermes/plugin-data/hermes-focus-widget/pomodoro-state.json), written
   atomically, restored on gateway restart. One daemon thread for the
   1-second timer tick and one loopback HTTP server thread, both inside
   the gateway process. No self-updater; no core overrides.
@@ -39,9 +39,9 @@ category: desktop
 requires_hermes: ">=0.21.5"
 docs_url: https://github.com/elianjuan-g/hermes-focus-widget
 screenshots:
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-floating.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-chip.png"
-  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/focus-widget-page.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-floating.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-chip.png"
+  - "https://raw.githubusercontent.com/elianjuan-g/hermes-focus-widget/46e25ccce0843c7f66a133481080921d07823598/docs/screenshots/pomodoro-widget-page.png"
 readme: true
 known_issues:
   - "Agent activity is not human focus: the timer knows when the agent is working, not whether the operator is focused."
