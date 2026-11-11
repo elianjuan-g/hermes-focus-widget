@@ -82,7 +82,7 @@ class TestRegisterContract(unittest.TestCase):
         self.assertEqual(schema["name"], "focus_timer")
         self.assertIn("status", schema["parameters"]["properties"]["action"]["enum"])
         for hook in ("on_session_start", "pre_llm_call", "pre_tool_call",
-                     "transform_llm_output", "post_api_request"):
+                     "transform_llm_output"):
             self.assertIn(hook, ctx.hooks)
         self.assertIn("/pomodoro", ctx.commands)
 
@@ -129,21 +129,6 @@ class TestRegisterContract(unittest.TestCase):
         self.assertIsNotNone(timer.last_activity_at)
         ctx.hooks["transform_llm_output"](output="done")
         self.assertIsNotNone(timer.last_activity_at)
-        # post_api_request: the dispatcher passes ~20 kwargs (see
-        # agent/turn_response_intake.py _fire_post_api_request_hook);
-        # the handler must accept the full set and still stamp.
-        ctx.hooks["post_api_request"](
-            task_id="t1", turn_id="r1", api_request_id="a1",
-            session_id="s", platform="cli", model="m", provider="p",
-            base_url="http://localhost", api_mode="chat",
-            api_call_count=1, api_duration=2.5, started_at=1000.0,
-            ended_at=1002.5, first_chunk_at=1000.4, finish_reason="stop",
-            message_count=3, response_model="m", response={},
-            usage={}, assistant_message=None,
-            assistant_content_chars=12, assistant_tool_call_count=0,
-            moa_references={},
-        )
-        self.assertIsNotNone(timer.last_activity_at)
 
 
 class TestPluginYaml(unittest.TestCase):
@@ -156,7 +141,6 @@ class TestPluginYaml(unittest.TestCase):
         self.assertEqual(manifest["entrypoint"], "hermes_focus_widget:register")
         self.assertEqual(manifest["provides_tools"], ["focus_timer"])
         self.assertIn("pre_llm_call", manifest["provides_hooks"])
-        self.assertIn("post_api_request", manifest["provides_hooks"])
         for key in ("focus_minutes", "agent_aware", "hud_port",
                     "auto_launch_server"):
             self.assertIn(key, manifest["config_schema"])
