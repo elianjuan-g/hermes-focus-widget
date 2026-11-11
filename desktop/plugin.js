@@ -324,6 +324,10 @@ function FocusWidgetPage() {
 export default {
   id: PLUGIN_ID,
   name: 'Focus Widget',
+  // Explicit: a standalone desktop-plugins/ install loads enabled.
+  // (A packaged copy ships opt-in; this file is also shipped as the
+  // standalone desktop surface.)
+  defaultEnabled: true,
   description: 'Pomodoro widget that only counts focus time while the agent is working.',
   register(ctx) {
     void ensureWidgetPort()
