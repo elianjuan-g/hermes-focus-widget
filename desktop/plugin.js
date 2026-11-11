@@ -241,13 +241,28 @@ function mountFloatingWidget(ctx) {
   document.body.appendChild(root)
   floatRoot = root
 
-  const saved = storageGet(ctx, FLOAT_STORAGE_KEY, null)
-  if (saved && typeof saved.x === 'number' && typeof saved.y === 'number') {
-    root.style.left = saved.x + 'px'
-    root.style.top = saved.y + 'px'
-    root.style.right = 'auto'
-    root.style.bottom = 'auto'
+  // Position with explicit left/top from the VIEWPORT, never right/bottom:
+  // the host app has transformed ancestors, which make `position:fixed`
+  // resolve `right` against a container wider than the viewport — the
+  // card used to hang half off-screen. A saved position is clamped back
+  // inside the current viewport, so a stale value from a wider window
+  // can never strand the widget off-screen again.
+  const FLOAT_W = 212
+  function clampFloat(x, y) {
+    const h = root.offsetHeight || 170
+    return {
+      x: Math.max(8, Math.min(x, window.innerWidth - FLOAT_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - h - 8))
+    }
   }
+  const saved = storageGet(ctx, FLOAT_STORAGE_KEY, null)
+  const placed = (saved && typeof saved.x === 'number' && typeof saved.y === 'number')
+    ? clampFloat(saved.x, saved.y)
+    : clampFloat(window.innerWidth - FLOAT_W - 16, window.innerHeight - (root.offsetHeight || 170) - 16)
+  root.style.left = placed.x + 'px'
+  root.style.top = placed.y + 'px'
+  root.style.right = 'auto'
+  root.style.bottom = 'auto'
   const drag = root.querySelector('#hfw-drag')
   let dragState = null
   drag.addEventListener('pointerdown', (e) => {
@@ -257,10 +272,10 @@ function mountFloatingWidget(ctx) {
   })
   drag.addEventListener('pointermove', (e) => {
     if (!dragState) return
-    const x = Math.max(0, Math.min(window.innerWidth - 60, dragState.left + e.clientX - dragState.x))
-    const y = Math.max(0, Math.min(window.innerHeight - 40, dragState.top + e.clientY - dragState.y))
-    root.style.left = x + 'px'
-    root.style.top = y + 'px'
+    // Keep the whole card on-screen while dragging (same clamp as mount).
+    const p = clampFloat(dragState.left + e.clientX - dragState.x, dragState.top + e.clientY - dragState.y)
+    root.style.left = p.x + 'px'
+    root.style.top = p.y + 'px'
     root.style.right = 'auto'
     root.style.bottom = 'auto'
   })
